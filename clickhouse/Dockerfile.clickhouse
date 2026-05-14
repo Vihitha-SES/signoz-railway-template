@@ -7,6 +7,9 @@ COPY configs/user_scripts /var/lib/clickhouse/user_scripts/
 COPY configs/cluster.xml /etc/clickhouse-server/config.d/cluster.xml
 COPY init-scripts/ /docker-entrypoint-initdb.d/
 
+# Force re-initialization by removing old metadata
+RUN rm -rf /var/lib/clickhouse/metadata/signoz_* /var/lib/clickhouse/data/signoz_* || true
+
 RUN mkdir -p /var/lib/clickhouse/user_scripts/ \
     && chown clickhouse:clickhouse /var/lib/clickhouse/user_scripts
 
