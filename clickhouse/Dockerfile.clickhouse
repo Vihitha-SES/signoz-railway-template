@@ -5,6 +5,7 @@ COPY configs/users.xml /etc/clickhouse-server/users.xml
 COPY configs/custom-function.xml /etc/clickhouse-server/custom-function.xml
 COPY configs/user_scripts /var/lib/clickhouse/user_scripts/
 COPY configs/cluster.xml /etc/clickhouse-server/config.d/cluster.xml
+COPY init-scripts/ /docker-entrypoint-initdb.d/
 
 RUN mkdir -p /var/lib/clickhouse/user_scripts/ \
     && chown clickhouse:clickhouse /var/lib/clickhouse/user_scripts
