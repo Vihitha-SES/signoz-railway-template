@@ -1,7 +1,12 @@
 -- Logs Tables for SigNoz v0.144.2
 
+-- Drop existing tables first
+DROP TABLE IF EXISTS signoz_logs.distributed_logs;
+DROP TABLE IF EXISTS signoz_logs.logs_index;
+DROP TABLE IF EXISTS signoz_logs.logs;
+
 -- Main logs table
-CREATE TABLE IF NOT EXISTS signoz_logs.logs (
+CREATE TABLE signoz_logs.logs (
     timestamp DateTime,
     severity_text String,
     severity_number UInt32,
@@ -19,11 +24,11 @@ TTL timestamp + INTERVAL 7 DAY
 SETTINGS index_granularity = 8192;
 
 -- Distributed logs table
-CREATE TABLE IF NOT EXISTS signoz_logs.distributed_logs AS signoz_logs.logs
+CREATE TABLE signoz_logs.distributed_logs AS signoz_logs.logs
 ENGINE = Distributed('cluster', 'signoz_logs', 'logs', rand());
 
 -- Logs index for fast lookups
-CREATE TABLE IF NOT EXISTS signoz_logs.logs_index (
+CREATE TABLE signoz_logs.logs_index (
     timestamp DateTime,
     service_name String,
     severity_text String,

@@ -1,7 +1,12 @@
 -- Traces Tables for SigNoz v0.144.2
 
+-- Drop existing tables first
+DROP TABLE IF EXISTS signoz_traces.distributed_spans;
+DROP TABLE IF EXISTS signoz_traces.span_index;
+DROP TABLE IF EXISTS signoz_traces.spans;
+
 -- Main spans table
-CREATE TABLE IF NOT EXISTS signoz_traces.spans (
+CREATE TABLE signoz_traces.spans (
     traceID String,
     spanID String,
     parentSpanID String,
@@ -25,11 +30,11 @@ TTL startTime + INTERVAL 72 HOUR
 SETTINGS index_granularity = 8192;
 
 -- Distributed traces table
-CREATE TABLE IF NOT EXISTS signoz_traces.distributed_spans AS signoz_traces.spans
+CREATE TABLE signoz_traces.distributed_spans AS signoz_traces.spans
 ENGINE = Distributed('cluster', 'signoz_traces', 'spans', rand());
 
 -- Index table for quick lookups
-CREATE TABLE IF NOT EXISTS signoz_traces.span_index (
+CREATE TABLE signoz_traces.span_index (
     traceID String,
     spanID String,
     startTime DateTime,
