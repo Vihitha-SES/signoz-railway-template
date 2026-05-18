@@ -1,0 +1,123 @@
+# Railway Modular SigNoz Deployment
+# Each service is independent, communicates via environment variables and service discovery
+# Deploy one by one in this order:
+# 1. zookeeper
+# 2. clickhouse
+# 3. signoz-schema-migrator
+# 4. signoz-otel-collector
+# 5. signoz (backend)
+# 6. signoz-frontend
+
+[services]
+
+# Service 1: Zookeeper (Replication coordination)
+[services.zookeeper]
+image = "bitnami/zookeeper:latest"
+environmentVariables = [
+  "ALLOW_ANONYMOUS_LOGIN=yes"
+]
+ports = [
+  { localPort = 2181, externalPort = 2181 }
+]
+healthCheck = {
+  type = "TCP",
+  port = 2181,
+  interval = 30,
+  timeout = 5
+}
+
+# Service 2: ClickHouse (Data storage)
+[services.clickhouse]
+image = "clickhouse/clickhouse-server:26.2.4.23"
+environmentVariables = [
+  "CLICKHOUSE_DB=signoz_metrics",
+  "CLICKHOUSE_USER=default",
+  "CLICKHOUSE_PASSWORD="
+]
+ports = [
+  { localPort = 8123, externalPort = 8123 },  # HTTP API
+  { localPort = 9000, externalPort = 9000 }   # Native protocol
+]
+volumes = [
+  { path = "/var/lib/clickhouse", type = "persistent" }
+]
+healthCheck = {
+  type = "HTTP",
+  path = "/ping",
+  port = 8123,
+  interval = 30,
+  timeout = 5
+}
+
+# Service 3: Schema Migrator (Initializes ClickHouse schema)
+# ⚠️ Use STABLE version, NOT RC!
+[services.signoz-schema-migrator]
+image = "signoz/signoz-schema-migrator:v0.144.2"
+startCommand = "sleep 120 && ./signoz-schema-migrator sync --dsn=tcp://clickhouse.railway.internal:9000 --cluster-name=cluster"
+environmentVariables = [
+  "CLICKHOUSE_DSN=tcp://clickhouse.railway.internal:9000",
+  "CLICKHOUSE_CLUSTER=cluster"
+]
+# No health check - this is a job, not a service
+
+# Service 4: OTEL Collector (Receives telemetry)
+[services.signoz-otel-collector]
+image = "signoz/signoz-otel-collector:v0.144.2"
+startCommand = "./signoz-otel-collector --config=/etc/otel-collector-config.yaml"
+environmentVariables = [
+  "CLICKHOUSE_DSN=tcp://clickhouse.railway.internal:9000",
+  "CLICKHOUSE_CLUSTER=cluster"
+]
+ports = [
+  { localPort = 4317, externalPort = 4317 },  # OTLP gRPC
+  { localPort = 4318, externalPort = 4318 }   # OTLP HTTP
+]
+healthCheck = {
+  type = "TCP",
+  port = 4317,
+  interval = 30,
+  timeout = 5
+}
+# Depends on: clickhouse, schema-migrator
+
+# Service 5: SigNoz Backend (Main API & processing)
+[services.signoz-backend]
+image = "signoz/signoz:v0.144.2"
+environmentVariables = [
+  "SIGNOZ_CLICKHOUSE_DSN=tcp://clickhouse.railway.internal:9000",
+  "SIGNOZ_TELEMETRY_ENABLED=true",
+  "SIGNOZ_OTEL_COLLECTOR_HOST=signoz-otel-collector.railway.internal",
+  "SIGNOZ_OTEL_COLLECTOR_PORT=4317"
+]
+ports = [
+  { localPort = 8080, externalPort = 8080 }
+]
+volumes = [
+  { path = "/var/lib/signoz", type = "persistent" }
+]
+healthCheck = {
+  type = "HTTP",
+  path = "/api/v1/health",
+  port = 8080,
+  interval = 30,
+  timeout = 5
+}
+# Depends on: clickhouse, schema-migrator
+
+# Service 6: SigNoz Frontend (Web UI)
+[services.signoz-frontend]
+image = "signoz/signoz-frontend:v0.144.2"
+environmentVariables = [
+  "API_URL=http://signoz-backend.railway.internal:8080"
+]
+ports = [
+  { localPort = 3301, externalPort = 3301 }
+]
+healthCheck = {
+  type = "HTTP",
+  path = "/",
+  port = 3301,
+  interval = 30,
+  timeout = 5
+}
+# Depends on: signoz-backend

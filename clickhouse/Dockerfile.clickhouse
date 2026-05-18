@@ -5,16 +5,16 @@ COPY configs/users.xml /etc/clickhouse-server/users.xml
 COPY configs/custom-function.xml /etc/clickhouse-server/custom-function.xml
 COPY configs/user_scripts /var/lib/clickhouse/user_scripts/
 COPY configs/cluster.xml /etc/clickhouse-server/config.d/cluster.xml
-COPY init-scripts/ /docker-entrypoint-initdb.d/
+COPY docker-entrypoint-custom.sh /docker-entrypoint-custom.sh
 
-# Make init scripts executable
-RUN chmod +x /docker-entrypoint-initdb.d/*.sh || true
-
-# Force re-initialization by removing old metadata
-RUN rm -rf /var/lib/clickhouse/metadata/signoz_* /var/lib/clickhouse/data/signoz_* || true
+# Make custom entrypoint executable
+RUN chmod +x /docker-entrypoint-custom.sh
 
 RUN mkdir -p /var/lib/clickhouse/user_scripts/ \
     && chown clickhouse:clickhouse /var/lib/clickhouse/user_scripts
+
+# Use custom entrypoint
+ENTRYPOINT ["/docker-entrypoint-custom.sh"]
 
 ARG VERSION=v0.0.1
 RUN set -eux; \
