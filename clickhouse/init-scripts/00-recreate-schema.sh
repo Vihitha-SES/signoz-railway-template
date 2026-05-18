@@ -81,6 +81,12 @@ ENGINE = Distributed('cluster', 'signoz_metrics', 'samples_v4', cityHash64(env, 
 CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_time_series_v4 AS signoz_metrics.time_series_v4
 ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4', cityHash64(env, temporality, metric_name, fingerprint));
 
+CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_time_series_v4_6hrs AS signoz_metrics.time_series_v4_6hrs
+ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4_6hrs', cityHash64(env, temporality, metric_name, fingerprint));
+
+CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_time_series_v4_1day AS signoz_metrics.time_series_v4_1day
+ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4_1day', cityHash64(env, temporality, metric_name, fingerprint));
+
 CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_exemplars_v4 AS signoz_metrics.exemplars_v4
 ENGINE = Distributed('cluster', 'signoz_metrics', 'exemplars_v4', cityHash64(env, metric_name, fingerprint));
 

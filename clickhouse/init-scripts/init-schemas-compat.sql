@@ -1,43 +1,12 @@
-#!/bin/bash
-set -e
+-- One-shot compatible SigNoz ClickHouse schema migration
+-- Run with: clickhouse-client --host <HOST> --user <USER> --password <PASS> < init-schemas-compat.sql
 
-# Start ClickHouse server in background
-/entrypoint.sh &
-CLICKHOUSE_PID=$!
-
-echo "Waiting for ClickHouse to be ready..."
-for i in {1..60}; do
-  if clickhouse-client --host=localhost -u default --password="" -q "SELECT 1" &>/dev/null; then
-    echo "ClickHouse is ready!"
-    break
-  fi
-  if [ $i -eq 60 ]; then
-    echo "ClickHouse failed to start"
-    exit 1
-  fi
-  sleep 1
-done
-
-echo "Recreating SigNoz schema..."
-
-# Single transaction to ensure atomicity
-clickhouse-client --host=localhost -u default --password="" <<'SCHEMA_EOF'
--- Create database
+-- Create databases
 CREATE DATABASE IF NOT EXISTS signoz_metrics;
 CREATE DATABASE IF NOT EXISTS signoz_traces;
 CREATE DATABASE IF NOT EXISTS signoz_logs;
 
--- Drop and recreate metrics tables (official SigNoz schemas)
-DROP TABLE IF EXISTS signoz_metrics.distributed_exemplars_v4;
-DROP TABLE IF EXISTS signoz_metrics.distributed_samples_v4;
-DROP TABLE IF EXISTS signoz_metrics.distributed_time_series_v4;
-DROP TABLE IF EXISTS signoz_metrics.time_series_v4_6hrs;
-DROP TABLE IF EXISTS signoz_metrics.time_series_v4_1day;
-DROP TABLE IF EXISTS signoz_metrics.exemplars_v4;
-DROP TABLE IF EXISTS signoz_metrics.samples_v4;
-DROP TABLE IF EXISTS signoz_metrics.time_series_v4;
-
--- Official SigNoz Samples Table
+-- Samples table
 CREATE TABLE IF NOT EXISTS signoz_metrics.samples_v4
 (
     env LowCardinality(String) DEFAULT 'default',
@@ -49,9 +18,10 @@ CREATE TABLE IF NOT EXISTS signoz_metrics.samples_v4
 )
 ENGINE = MergeTree()
 ORDER BY (env, temporality, metric_name, fingerprint, unix_milli)
-PARTITION BY toDate(fromUnixTimestamp64Milli(unix_milli));
+PARTITION BY toDate(fromUnixTimestamp64Milli(unix_milli))
+SETTINGS index_granularity = 8192;
 
--- Official SigNoz Time Series Table
+-- Time series table
 CREATE TABLE IF NOT EXISTS signoz_metrics.time_series_v4
 (
     env LowCardinality(String) DEFAULT 'default',
@@ -67,13 +37,14 @@ CREATE TABLE IF NOT EXISTS signoz_metrics.time_series_v4
 )
 ENGINE = MergeTree()
 ORDER BY (env, temporality, metric_name, fingerprint, unix_milli)
-PARTITION BY toDate(fromUnixTimestamp64Milli(unix_milli));
+PARTITION BY toDate(fromUnixTimestamp64Milli(unix_milli))
+SETTINGS index_granularity = 8192;
 
 -- Aggregated time series
 CREATE TABLE IF NOT EXISTS signoz_metrics.time_series_v4_6hrs AS signoz_metrics.time_series_v4;
 CREATE TABLE IF NOT EXISTS signoz_metrics.time_series_v4_1day AS signoz_metrics.time_series_v4;
 
--- Minimal Exemplars table (keep unix_milli aligned)
+-- Exemplars
 CREATE TABLE IF NOT EXISTS signoz_metrics.exemplars_v4 (
     env LowCardinality(String) DEFAULT 'default',
     metric_name LowCardinality(String),
@@ -84,18 +55,11 @@ CREATE TABLE IF NOT EXISTS signoz_metrics.exemplars_v4 (
     span_id String
 ) ENGINE = MergeTree()
 ORDER BY (env, metric_name, fingerprint, unix_milli)
-PARTITION BY toDate(fromUnixTimestamp64Milli(unix_milli));
+PARTITION BY toDate(fromUnixTimestamp64Milli(unix_milli))
+SETTINGS index_granularity = 8192;
 
-  -- Distributed wrappers for aggregated time series
-  CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_time_series_v4_6hrs AS signoz_metrics.time_series_v4_6hrs
-  ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4_6hrs', cityHash64(env, temporality, metric_name, fingerprint));
-
-  CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_time_series_v4_1day AS signoz_metrics.time_series_v4_1day
-  ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4_1day', cityHash64(env, temporality, metric_name, fingerprint));
-
--- Metadata (official schema expects metadata for metrics)
-CREATE TABLE IF NOT EXISTS signoz_metrics.metadata
-(
+-- Metadata
+CREATE TABLE IF NOT EXISTS signoz_metrics.metadata (
     metric_name LowCardinality(String),
     type LowCardinality(String),
     unit LowCardinality(String),
@@ -103,16 +67,21 @@ CREATE TABLE IF NOT EXISTS signoz_metrics.metadata
     temporality LowCardinality(String),
     is_monotonic Bool,
     created_at DateTime DEFAULT now()
-)
-ENGINE = MergeTree()
+) ENGINE = MergeTree()
 ORDER BY (metric_name, type);
 
--- Distributed tables for cluster setup (sharding using cityHash64)
+-- Distributed wrappers
 CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_samples_v4 AS signoz_metrics.samples_v4
 ENGINE = Distributed('cluster', 'signoz_metrics', 'samples_v4', cityHash64(env, temporality, metric_name, fingerprint));
 
 CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_time_series_v4 AS signoz_metrics.time_series_v4
 ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4', cityHash64(env, temporality, metric_name, fingerprint));
+
+CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_time_series_v4_6hrs AS signoz_metrics.time_series_v4_6hrs
+ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4_6hrs', cityHash64(env, temporality, metric_name, fingerprint));
+
+CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_time_series_v4_1day AS signoz_metrics.time_series_v4_1day
+ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4_1day', cityHash64(env, temporality, metric_name, fingerprint));
 
 CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_exemplars_v4 AS signoz_metrics.exemplars_v4
 ENGINE = Distributed('cluster', 'signoz_metrics', 'exemplars_v4', cityHash64(env, metric_name, fingerprint));
@@ -120,12 +89,8 @@ ENGINE = Distributed('cluster', 'signoz_metrics', 'exemplars_v4', cityHash64(env
 CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_metadata AS signoz_metrics.metadata
 ENGINE = Distributed('cluster', 'signoz_metrics', 'metadata', cityHash64(metric_name, type));
 
--- Drop and recreate traces tables
-DROP TABLE IF EXISTS signoz_traces.distributed_spans;
-DROP TABLE IF EXISTS signoz_traces.span_index;
-DROP TABLE IF EXISTS signoz_traces.spans;
-
-CREATE TABLE signoz_traces.spans (
+-- Traces and logs minimal
+CREATE TABLE IF NOT EXISTS signoz_traces.spans (
     traceID String,
     spanID String,
     parentSpanID String,
@@ -147,25 +112,7 @@ CREATE TABLE signoz_traces.spans (
 ORDER BY (serviceName, startTime)
 TTL startTime + INTERVAL 72 HOUR;
 
-CREATE TABLE signoz_traces.distributed_spans AS signoz_traces.spans
-ENGINE = Distributed('cluster', 'signoz_traces', 'spans', rand());
-
-CREATE TABLE signoz_traces.span_index (
-    traceID String,
-    spanID String,
-    startTime DateTime,
-    serviceName String,
-    operationName String
-) ENGINE = MergeTree()
-ORDER BY (traceID, startTime)
-TTL startTime + INTERVAL 72 HOUR;
-
--- Drop and recreate logs tables
-DROP TABLE IF EXISTS signoz_logs.distributed_logs;
-DROP TABLE IF EXISTS signoz_logs.logs_index;
-DROP TABLE IF EXISTS signoz_logs.logs;
-
-CREATE TABLE signoz_logs.logs (
+CREATE TABLE IF NOT EXISTS signoz_logs.logs (
     timestamp DateTime,
     severity_text String,
     severity_number UInt32,
@@ -180,26 +127,3 @@ CREATE TABLE signoz_logs.logs (
 ) ENGINE = MergeTree()
 ORDER BY (service_name, timestamp)
 TTL timestamp + INTERVAL 7 DAY;
-
-CREATE TABLE signoz_logs.distributed_logs AS signoz_logs.logs
-ENGINE = Distributed('cluster', 'signoz_logs', 'logs', rand());
-
-CREATE TABLE signoz_logs.logs_index (
-    timestamp DateTime,
-    service_name String,
-    severity_text String,
-    body String
-) ENGINE = MergeTree()
-ORDER BY (service_name, timestamp, severity_text)
-TTL timestamp + INTERVAL 7 DAY;
-
-SCHEMA_EOF
-
-if [ $? -eq 0 ]; then
-  echo "Schema recreation completed successfully!"
-else
-  echo "Schema recreation failed, but continuing..."
-fi
-
-# Keep ClickHouse running
-wait $CLICKHOUSE_PID

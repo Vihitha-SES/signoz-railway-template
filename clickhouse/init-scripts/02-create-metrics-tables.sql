@@ -51,9 +51,17 @@ CREATE TABLE IF NOT EXISTS signoz_metrics.exemplars_v4 (
     metric_name LowCardinality(String),
     fingerprint UInt64,
     unix_milli Int64,
-    value Float64,
-    trace_id String,
-    span_id String
+) ENGINE = MergeTree()
+ORDER BY (env, metric_name, fingerprint, unix_milli)
+PARTITION BY toDate(fromUnixTimestamp64Milli(unix_milli))
+SETTINGS index_granularity = 8192;
+
+-- Distributed wrappers for aggregated time series
+CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_time_series_v4_6hrs AS signoz_metrics.time_series_v4_6hrs
+ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4_6hrs', cityHash64(env, temporality, metric_name, fingerprint));
+
+CREATE TABLE IF NOT EXISTS signoz_metrics.distributed_time_series_v4_1day AS signoz_metrics.time_series_v4_1day
+ENGINE = Distributed('cluster', 'signoz_metrics', 'time_series_v4_1day', cityHash64(env, temporality, metric_name, fingerprint));
 ) ENGINE = MergeTree()
 ORDER BY (env, metric_name, fingerprint, unix_milli)
 PARTITION BY toDate(fromUnixTimestamp64Milli(unix_milli))
